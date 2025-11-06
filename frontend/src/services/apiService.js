@@ -65,9 +65,26 @@ export const getDashboardStats = () => {
 };
 
 // --- এটিও আপনার পরবর্তী ধাপের জন্য ---
+
+
+
+
+// apiService.js
+
+// ... আপনার আগের সব ফাংশন ...
+
 export const submitQuizScore = (quizId, score) => {
   return apiClient.post('submit-quiz/', {
     quiz_id: quizId,
     score: score,
+  });
+};
+
+// ----- নিচের ফাংশনটি নতুন যোগ করুন -----
+// ম্যাচিং গেমের স্কোর ডাটাবেসে সেভ করার জন্য
+export const submitGameScore = (gameId, score) => {
+  return apiClient.post('submit-game/', {
+    game_id: gameId,
+    score: score, // সাধারণত 100 হবে
   });
 };

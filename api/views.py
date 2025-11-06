@@ -1,204 +1,183 @@
-# উপরের import গুলো আপডেট করুন
-from rest_framework import viewsets, generics, permissions
-from .models import Course
-from django.contrib.auth.models import User
-from .serializers import CourseSerializer, UserRegistrationSerializer
 
 
-# ... আপনার অন্যান্য import ...
-from .models import UserProgress, Topic
-from .serializers import UserProgressSerializer
+from rest_framework import viewsets, generics, permissions, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
-
-# api/views.py
-
-from django.db.models import Count, Q
-from .models import Course, UserProgress
-# ... আপনার অন্যান্য import ...
-
-# ... আপনার অন্যান্য import-এর সাথে নিচের লাইনটি যোগ করুন ...
 from rest_framework.permissions import IsAuthenticated
+from django.contrib.auth.models import User
+from django.db.models import Avg
 
+# Import Models
+from .models import (
+    Course, Topic, 
+    Quiz, UserProgress, QuizAttempt,
+    MatchingGame, GameAttempt 
+)
+# Import Serializers
+from .serializers import (
+    CourseSerializer, UserRegistrationSerializer, UserProgressSerializer, QuizAttemptSerializer,
+    GameAttemptSerializer
+)
 
-from .models import UserProgress # (এটি সম্ভবত আগেই ইমপোর্ট করা আছে)
-
-# UserProgressSerializer এর সাথে QuizAttemptSerializer ইমপোর্ট করুন
-from .serializers import UserProgressSerializer, QuizAttemptSerializer
-from .models import QuizAttempt # <-- QuizAttempt ইমপোর্ট করুন
-
-from django.db.models import Count, Q, Avg
-from .models import Course, UserProgress, QuizAttempt # <-- QuizAttempt ইমপোর্ট করুন
-
-
-
-
-
-# ফাইলের উপরের দিকে এগুলো import করুন
-
-
-# ... CourseViewSet ক্লাসটি যেমন আছে থাকবে ...
-
-#
-
+# --- Course ViewSet ---
 class CourseViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    এই ViewSet টি কোর্সগুলোর একটি তালিকা (list) এবং 
-    একটি নির্দিষ্ট কোর্সের বিস্তারিত (detail) দেখার সুযোগ করে দেয়।
-    """
-    queryset = Course.objects.all()
+    queryset = Course.objects.all().prefetch_related(
+        'chapters__topics__topic_quiz__questions__answers',
+        'chapters__topics__matching_game__pairs',
+        'chapters__chapter_quiz__questions__answers',
+        'chapters__matching_game__pairs',
+        'course_quiz__questions__answers',
+        'matching_game__pairs'
+    )
     serializer_class = CourseSerializer
 
-# Create your views here.
-# ফাইলের শেষে এই নতুন ক্লাসটি যোগ করুন
+# --- User Registration ---
 class UserRegistrationView(generics.CreateAPIView):
     queryset = User.objects.all()
     permission_classes = (permissions.AllowAny,)
     serializer_class = UserRegistrationSerializer
 
- 
+# --- Submit Quiz Score ---
+class SubmitQuizView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request, *args, **kwargs):
+        quiz_id = request.data.get('quiz_id')
+        score = request.data.get('score')
+        user = request.user
 
+        if quiz_id is None or score is None:
+            return Response({"error": "quiz_id and score are required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            quiz = Quiz.objects.get(id=quiz_id)
+            attempt, created = QuizAttempt.objects.update_or_create(
+                user=user, quiz=quiz, defaults={'score': score} 
+            )
+            serializer = QuizAttemptSerializer(attempt)
+            if quiz.topic: # Automatic Topic Completion
+                try:
+                    progress, progress_created = UserProgress.objects.get_or_create(
+                        user=user, topic=quiz.topic, defaults={'completed': True}
+                    )
+                    if not progress_created and not progress.completed:
+                        progress.completed = True
+                        progress.save()
+                except Exception as e:
+                    print(f"Error updating progress for topic {quiz.topic.id}: {e}") 
+            return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+        except Quiz.DoesNotExist:
+            return Response({"error": "Quiz not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
- # api/views.py
+# --- Submit Game Score ---
+class SubmitGameView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request, *args, **kwargs):
+        game_id = request.data.get('game_id')
+        score = request.data.get('score')
+        user = request.user
 
+        if game_id is None or score is None:
+            return Response({"error": "game_id and score are required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            game = MatchingGame.objects.get(id=game_id)
+            attempt, created = GameAttempt.objects.update_or_create(
+                user=user, game=game, defaults={'score': score} 
+            )
+            serializer = GameAttemptSerializer(attempt)
+            if game.topic: # Automatic Topic Completion
+                try:
+                    progress, progress_created = UserProgress.objects.get_or_create(
+                        user=user, topic=game.topic, defaults={'completed': True}
+                    )
+                    if not progress_created and not progress.completed:
+                        progress.completed = True
+                        progress.save()
+                except Exception as e:
+                    print(f"Error updating progress for topic {game.topic.id} via game: {e}") 
+            return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+        except MatchingGame.DoesNotExist:
+            return Response({"error": "MatchingGame not found"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
+# --- Get User Progress for a Course ---
+class CourseProgressView(generics.ListAPIView):
+    serializer_class = UserProgressSerializer
+    permission_classes = [IsAuthenticated]
+    def get_queryset(self):
+        course_id = self.kwargs.get('course_id')
+        return UserProgress.objects.filter(
+            user=self.request.user, topic__chapter__course_id=course_id, completed=True 
+        )
 
-# ... আপনার অন্যান্য View ...
-
-# ----- ফাইলের শেষে নিচের নতুন ক্লাসটি যোগ করুন -----
+# --- Mark Topic Complete (Manual) ---
 class MarkTopicCompleteView(APIView):
-    permission_classes = [IsAuthenticated] # শুধু লগইন করা ইউজাররা এটা ব্যবহার করতে পারবে
-
+    permission_classes = [IsAuthenticated]
     def post(self, request, topic_id, *args, **kwargs):
         try:
             topic = Topic.objects.get(id=topic_id)
-            # UserProgress অবজেক্টটি খুঁজে বের করা বা নতুন তৈরি করা
             progress, created = UserProgress.objects.get_or_create(
-                user=request.user,
-                topic=topic
+                user=request.user, topic=topic, defaults={'completed': True}
             )
-            
-            # টপিকটিকে সম্পন্ন হিসেবে চিহ্নিত করা
-            progress.completed = True
-            progress.save()
-            
+            if not created and not progress.completed:
+                progress.completed = True
+                progress.save()
             serializer = UserProgressSerializer(progress)
             return Response(serializer.data, status=status.HTTP_200_OK)
-            
         except Topic.DoesNotExist:
             return Response({"error": "Topic not found"}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        
 
- # api/views.py
-
-
-# ... আপনার অন্যান্য View ...
-
-# ----- ফাইলের শেষে নিচের নতুন ক্লাসটি যোগ করুন -----
-class CourseProgressView(generics.ListAPIView):
-    serializer_class = UserProgressSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        # URL থেকে কোর্সের ID (course_id) নেওয়া হচ্ছে
-        course_id = self.kwargs.get('course_id')
-        # শুধুমাত্র বর্তমানে লগইন করা ব্যবহারকারীর জন্য
-        # এবং শুধুমাত্র এই নির্দিষ্ট কোর্সের টপিকগুলোর জন্য প্রগ্রেস ফিল্টার করা হচ্ছে
-        return UserProgress.objects.filter(
-            user=self.request.user,
-            topic__chapter__course_id=course_id,
-            completed=True # শুধু সম্পন্ন করা টপিকগুলো পাঠাও
-        )       
-    
-
- # api/views.py
-
-
-
-# ... আপনার অন্যান্য View ...
-
-# ----- ফাইলের শেষে নিচের নতুন ক্লাসটি যোগ করুন -----
-# api/views.py
-
-# --- Avg ইমপোর্ট করুন (গড় গণনার জন্য) ---
-
-# ... আপনার অন্যান্য View ...
-
-# ----- নিচের UserDashboardStatsView ক্লাসটি প্রতিস্থাপন করুন -----
+# ----- এটিই সেই আপগ্রেডেড ক্লাস -----
 class UserDashboardStatsView(APIView):
+    """
+    Calculates and returns statistics for ALL courses for the logged-in user.
+    Shows 0% for courses not started.
+    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        # ব্যবহারকারী যে কোর্সগুলোতে কমপক্ষে একটি টপিক সম্পন্ন করেছে, সেগুলো খুঁজে বের করা
-        enrolled_courses_ids = UserProgress.objects.filter(user=request.user).values_list('topic__chapter__course_id', flat=True).distinct()
-        
+        print("!!!!!!!!!! DEBUG: চূড়ান্ত ড্যাশবোর্ড কোডটি চলছে (বাগ ফিক্স সহ) !!!!!!!!!!")
+        user = request.user
+        all_courses = Course.objects.all()
         courses_stats = []
-        for course_id in enrolled_courses_ids:
-            course = Course.objects.get(id=course_id)
-            
-            # --- টপিক সমাপ্তির গণনা (আগের মতোই) ---
-            total_topics = course.chapters.aggregate(total_topics=Count('topics'))['total_topics']
-            completed_topics = UserProgress.objects.filter(
-                user=request.user,
-                topic__chapter__course_id=course_id,
-                completed=True
-            ).count()
-            completion_percentage = (completed_topics / total_topics) * 100 if total_topics > 0 else 0
-            
-            # ----- নতুন: কুইজের গড় স্কোর গণনা -----
-            # এই কোর্সের অধ্যায় বা টপিকের সাথে যুক্ত সব কুইজে ব্যবহারকারীর চেষ্টার (attempt) গড় স্কোর
-            avg_score_data = QuizAttempt.objects.filter(
-                user=request.user,
-                quiz__topic__chapter__course_id=course_id
-            ).aggregate(average_score=Avg('score'))
-            
-            avg_chapter_score_data = QuizAttempt.objects.filter(
-                user=request.user,
-                quiz__chapter__course_id=course_id
-            ).aggregate(average_score=Avg('score'))
-
-            # দুটি গড় স্কোরের মধ্যে যেটি null নয়, সেটি নেওয়া
-            avg_score = avg_score_data['average_score'] or avg_chapter_score_data['average_score']
-            
-            courses_stats.append({
-                'course_id': course.id,
-                'course_title': course.title,
-                'total_topics': total_topics,
-                'completed_topics': completed_topics,
-                'completion_percentage': round(completion_percentage, 2),
-                'average_quiz_score': round(avg_score, 2) if avg_score is not None else None # <-- নতুন ডেটা
-            })
+        
+        for course in all_courses:
+            try:
+                total_topics_count = Topic.objects.filter(chapter__course_id=course.id).count()
+                
+                completed_topics_count = UserProgress.objects.filter(
+                    user=user,
+                    topic__chapter__course_id=course.id,
+                    completed=True
+                ).count()
+                
+                completion_percentage = (completed_topics_count / total_topics_count) * 100 if total_topics_count > 0 else 0
+                
+                # --- কুইজের গড় স্কোর গণনার সংশোধিত কোড ---
+                # (এটি এখন টপিক, অধ্যায় এবং কোর্স কুইজ—সবকিছুই হিসাব করবে)
+                topic_quiz_attempts = QuizAttempt.objects.filter(user=user, quiz__topic__chapter__course_id=course.id)
+                chapter_quiz_attempts = QuizAttempt.objects.filter(user=user, quiz__chapter__course_id=course.id)
+                course_quiz_attempts = QuizAttempt.objects.filter(user=user, quiz__course_id=course.id)
+                
+                # সব ধরনের কুইজ অ্যাটেম্পটকে একত্রিত করা
+                latest_attempts = topic_quiz_attempts.union(chapter_quiz_attempts, course_quiz_attempts).distinct()
+                
+                avg_score_data = latest_attempts.aggregate(average_score=Avg('score'))
+                avg_score = avg_score_data.get('average_score')
+                
+                courses_stats.append({
+                    'course_id': course.id,
+                    'course_title': course.title,
+                    'total_topics': total_topics_count,
+                    'completed_topics': completed_topics_count,
+                    'completion_percentage': round(completion_percentage, 2),
+                    'average_quiz_score': round(avg_score, 2) if avg_score is not None else None 
+                })
+            except Exception as e:
+                print(f"Error processing stats for course {course.id}: {e}")
+                continue
             
         return Response(courses_stats)
-           
-    
-
-# api/views.py
-
-# ... আপনার অন্যান্য import ...
-
-# ... আপনার অন্যান্য View ...
-
-# ----- ফাইলের শেষে নিচের নতুন ক্লাসটি যোগ করুন -----
-class SubmitQuizView(APIView):
-    permission_classes = [IsAuthenticated] # শুধু লগইন করা ইউজাররাই স্কোর জমা দিতে পারবে
-
-    def post(self, request, *args, **kwargs):
-        # ফ্রন্টএন্ড থেকে পাঠানো ডেটা (quiz_id এবং score) নেওয়া হচ্ছে
-        data = {
-            'quiz': request.data.get('quiz_id'),
-            'score': request.data.get('score'),
-            'user': request.user.id  # স্বয়ংক্রিয়ভাবে লগইন করা ইউজারকে সেট করা
-        }
-        
-        serializer = QuizAttemptSerializer(data=data)
-        
-        if serializer.is_valid():
-            serializer.save(user=request.user) # ইউজারকে সেট করে সেভ করা
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        else:
-            # যদি কোনো ভুল থাকে (যেমন score না পাঠানো হয়)
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)    

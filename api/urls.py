@@ -1,28 +1,26 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import CourseViewSet ,UserRegistrationView
-from .views import CourseViewSet, UserRegistrationView 
-from .views import MarkTopicCompleteView # <-- নতুন ভিউ ইমপোর্ট করুন
-from .views import MarkTopicCompleteView, CourseProgressView, UserDashboardStatsView, SubmitQuizView
+from .views import (
+    CourseViewSet, 
+    UserRegistrationView, 
+    SubmitQuizView, 
+    SubmitGameView, 
+    CourseProgressView, 
+    UserDashboardStatsView,
+    MarkTopicCompleteView # <-- এটি ফিরিয়ে আনা হয়েছে
+)
 
-
-# একটি রাউটার তৈরি করা হচ্ছে
 router = DefaultRouter()
-# কোর্স ভিউসেটকে রাউটারে রেজিস্টার করা হচ্ছে
 router.register(r'courses', CourseViewSet, basename='course')
 
-# আমাদের API URL গুলো এখন রাউটার দ্বারা স্বয়ংক্রিয়ভাবে তৈরি হবে
 urlpatterns = [
     path('', include(router.urls)),
     path('register/', UserRegistrationView.as_view(), name='register'),
-    path('topics/<int:topic_id>/mark-complete/', MarkTopicCompleteView.as_view(), name='mark-topic-complete'),
+    path('submit-quiz/', SubmitQuizView.as_view(), name='submit-quiz'),
+    path('submit-game/', SubmitGameView.as_view(), name='submit-game'),
     path('courses/<int:course_id>/my-progress/', CourseProgressView.as_view(), name='course-progress'),
     path('dashboard-stats/', UserDashboardStatsView.as_view(), name='dashboard-stats'),
-    path('submit-quiz/', SubmitQuizView.as_view(), name='submit-quiz'),
-  
-
+    
+    # ----- এটিই সেই URL যা আমরা ফিরিয়ে আনছি -----
+    path('topics/<int:topic_id>/mark-complete/', MarkTopicCompleteView.as_view(), name='mark-topic-complete'),
 ]
-
-
-
-

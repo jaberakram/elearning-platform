@@ -1,12 +1,15 @@
 from rest_framework import serializers
-from .models import Course, Chapter, Topic, Quiz, Question, Answer
 from django.contrib.auth.models import User
-from .models import UserProgress # <-- UserProgress মডেল ইমপোর্ট করুন
-from .models import UserProgress, QuizAttempt # <-- QuizAttempt ইমপোর্ট করুন
+from .models import (
+    Course, Chapter, Topic, 
+    Quiz, Question, Answer, 
+    UserProgress, QuizAttempt,
+    MatchingGame, MatchingPair, GameAttempt
+)
 
-
-
-
+# -------------------------
+# কুইজ সিস্টেমের সিরিয়ালাইজার
+# -------------------------
 class AnswerSerializer(serializers.ModelSerializer):
     class Meta:
         model = Answer
@@ -24,42 +27,68 @@ class QuizSerializer(serializers.ModelSerializer):
         model = Quiz
         fields = ['id', 'title', 'questions']
 
-# api/serializers.py
+# -------------------------
+# ম্যাচিং গেমের সিরিয়ালাইজার
+# -------------------------
+class MatchingPairSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MatchingPair
+        fields = ['id', 'item_a', 'item_b']
 
-# ... AnswerSerializer, QuestionSerializer, QuizSerializer যেমন আছে থাকবে ...
+class MatchingGameSerializer(serializers.ModelSerializer):
+    pairs = MatchingPairSerializer(many=True, read_only=True)
+    
+    class Meta:
+        model = MatchingGame
+        fields = ['id', 'title', 'pairs']
 
-# ----- নিচের TopicSerializer ক্লাসটি পরিবর্তন করুন -----
+# -------------------------
+# মূল কনটেন্ট সিরিয়ালাইজার (আপডেটেড)
+# -------------------------
 class TopicSerializer(serializers.ModelSerializer):
-    topic_quiz = QuizSerializer(read_only=True) # <-- নতুন লাইন
+    topic_quiz = QuizSerializer(read_only=True)
+    matching_game = MatchingGameSerializer(read_only=True)
+
     class Meta:
         model = Topic
-        fields = ['id', 'title', 'video_url', 'article_content', 'order', 'topic_quiz'] # <-- 'topic_quiz' যোগ করুন
+        fields = [
+            'id', 'title', 'video_url', 'article_content', 'order', 
+            'topic_quiz', 'matching_game'
+        ]
 
-# ----- নিচের ChapterSerializer ক্লাসটি পরিবর্তন করুন -----
 class ChapterSerializer(serializers.ModelSerializer):
     topics = TopicSerializer(many=True, read_only=True)
-    chapter_quiz = QuizSerializer(read_only=True) # <-- 'quiz'-কে 'chapter_quiz' করুন
+    chapter_quiz = QuizSerializer(read_only=True)
+    matching_game = MatchingGameSerializer(read_only=True)
+
     class Meta:
         model = Chapter
-        fields = ['id', 'title', 'order', 'topics', 'chapter_quiz'] # <-- 'quiz'-কে 'chapter_quiz' করুন
+        fields = [
+            'id', 'title', 'order', 'topics', 
+            'chapter_quiz', 'matching_game'
+        ]
 
-# ... CourseSerializer এবং UserRegistrationSerializer যেমন আছে থাকবে ...
-
+# ----- এটিই সেই সমাধান -----
 class CourseSerializer(serializers.ModelSerializer):
     chapters = ChapterSerializer(many=True, read_only=True)
+    # --- এই দুটি লাইন নতুন যোগ করা হয়েছে ---
+    course_quiz = QuizSerializer(read_only=True)
+    matching_game = MatchingGameSerializer(read_only=True)
+
     class Meta:
         model = Course
-        fields = ['id', 'title', 'description', 'chapters']
+        # --- ফিল্ড লিস্ট আপডেট করা হয়েছে ---
+        fields = [
+            'id', 'title', 'description', 'chapters', 
+            'course_quiz', 'matching_game'
+        ]
 
-
-
-
-
-
-# একদম শেষে এই নতুন ক্লাসটি যোগ করুন
+# -------------------------
+# ইউজার সম্পর্কিত সিরিয়ালাইজার
+# -------------------------
 class UserRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True, style={'input_type': 'password'})
-
+    
     class Meta:
         model = User
         fields = ('username', 'password', 'email', 'first_name', 'last_name')
@@ -73,35 +102,23 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             last_name=validated_data.get('last_name', '')
         )
         return user
-    
 
- # api/serializers.py
-
-# ... আপনার অন্যান্য import ...
-
-
-# ... আপনার অন্যান্য Serializer ...
-
-# ----- ফাইলের শেষে নিচের নতুন ক্লাসটি যোগ করুন -----
 class UserProgressSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserProgress
         fields = ['id', 'user', 'topic', 'completed']
-        read_only_fields = ('user',) # ইউজারকে স্বয়ংক্রিয়ভাবে সেট করা হবে   
+        read_only_fields = ('user',)
 
-
-# api/serializers.py
-
-# ... আপনার অন্যান্য import ...
-
-
-# ... আপনার অন্যান্য Serializer ...
-
-# ----- ফাইলের শেষে নিচের নতুন ক্লাসটি যোগ করুন -----
 class QuizAttemptSerializer(serializers.ModelSerializer):
-    user = serializers.StringRelatedField(read_only=True) # শুধু দেখানোর জন্য
-
+    user = serializers.StringRelatedField(read_only=True)
     class Meta:
         model = QuizAttempt
         fields = ['id', 'user', 'quiz', 'score', 'timestamp']
-        read_only_fields = ('user', 'timestamp') # ইউজার এবং সময় স্বয়ংক্রিয়ভাবে সেট হবে        
+        read_only_fields = ('user', 'timestamp')
+
+class GameAttemptSerializer(serializers.ModelSerializer):
+    user = serializers.StringRelatedField(read_only=True)
+    class Meta:
+        model = GameAttempt
+        fields = ['id', 'user', 'game', 'score', 'timestamp']
+        read_only_fields = ('user', 'timestamp')
